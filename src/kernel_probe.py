@@ -6,6 +6,7 @@ Author: Sala Blanca Operator
 """
 
 from bcc import BPF
+import os
 import sys
 
 bpf_source = """
@@ -21,12 +22,15 @@ struct data_t {
 
 BPF_PERF_OUTPUT(events);
 
-int trace_execve(struct pt_regs *ctx, const char __user *filename) {
+int trace_execve(struct pt_regs *ctx) {
     struct data_t data = {};
     data.pid = bpf_get_current_pid_tgid() >> 32;
     data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     bpf_get_current_comm(&data.comm, sizeof(data.comm));
-    bpf_probe_read_user(&data.filename, sizeof(data.filename), (void *)filename);
+
+    const char __user *filename_ptr = (const char __user *)PT_REGS_PARM1(ctx);
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename_ptr);
+
     events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
@@ -36,10 +40,11 @@ b = None
 
 def imprimir_evento(cpu, data, size):
     evento = b["events"].event(data)
+    binario = evento.filename.decode("utf-8", "ignore") or "<desconocido>"
+    proceso = evento.comm.decode("utf-8", "ignore")
     print(
         f"[ALERTA KERNEL] PID: {evento.pid} | UID: {evento.uid} | "
-        f"Proceso: {evento.comm.decode('utf-8', 'ignore')} | "
-        f"Binario: {evento.filename.decode('utf-8', 'ignore')}",
+        f"Proceso: {proceso} | Binario: {binario}",
         flush=True,
     )
 
@@ -59,7 +64,8 @@ def main():
             b.perf_buffer_poll()
     except KeyboardInterrupt:
         print("\n[-] Desconectando sonda del kernel y limpiando registros...", flush=True)
-        sys.exit(0)
+        # Evita que el hook atexit intente acceder a /sys/kernel/tracing si no existe
+        os._exit(0)
 
 if __name__ == "__main__":
     main()
