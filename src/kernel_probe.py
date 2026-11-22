@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-KernelPulse-eBPF: Real-time kernel-level syscall monitor.
+KernelPulse-eBPF: Real-time kernel-level syscall monitor via tracepoint.
 Author: Sala Blanca Operator
 """
 
@@ -22,16 +22,15 @@ struct data_t {
 
 BPF_PERF_OUTPUT(events);
 
-int trace_execve(struct pt_regs *ctx) {
+TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
     struct data_t data = {};
     data.pid = bpf_get_current_pid_tgid() >> 32;
     data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     bpf_get_current_comm(&data.comm, sizeof(data.comm));
 
-    const char __user *filename_ptr = (const char __user *)PT_REGS_PARM1(ctx);
-    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename_ptr);
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
 
-    events.perf_submit(ctx, &data, sizeof(data));
+    events.perf_submit(args, &data, sizeof(data));
     return 0;
 }
 """
@@ -51,10 +50,9 @@ def imprimir_evento(cpu, data, size):
 def main():
     global b
     print("=== KERNELPULSE-eBPF ACTIVE MONITOR ===", flush=True)
-    print("[*] Compilando e inyectando sonda en el Kernel...", flush=True)
+    print("[*] Compilando e inyectando sonda (tracepoint syscalls:sys_enter_execve)...", flush=True)
 
     b = BPF(text=bpf_source)
-    b.attach_kprobe(event=b.get_syscall_fnname("execve"), fn_name="trace_execve")
 
     print("[+] Sonda activa. Monitoreando llamadas al sistema en tiempo real. Presiona Ctrl+C para salir.\n", flush=True)
     b["events"].open_perf_buffer(imprimir_evento)
@@ -64,7 +62,6 @@ def main():
             b.perf_buffer_poll()
     except KeyboardInterrupt:
         print("\n[-] Desconectando sonda del kernel y limpiando registros...", flush=True)
-        # Evita que el hook atexit intente acceder a /sys/kernel/tracing si no existe
         os._exit(0)
 
 if __name__ == "__main__":
