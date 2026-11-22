@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-KernelPulse-eBPF: Real-time kernel-level syscall monitor via tracepoint.
+KernelPulse-eBPF: Real-time kernel-level execve monitor via raw_tracepoint.
 Author: Sala Blanca Operator
 """
 
@@ -12,6 +12,7 @@ import sys
 bpf_source = """
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
+#include <asm/unistd_64.h>
 
 struct data_t {
     u32 pid;
@@ -22,15 +23,28 @@ struct data_t {
 
 BPF_PERF_OUTPUT(events);
 
-TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
+RAW_TRACEPOINT_PROBE(sys_enter) {
+    unsigned long syscall_id = ctx->args[1];
+    if (syscall_id != __NR_execve) {
+        return 0;
+    }
+
+    struct pt_regs *regs = (struct pt_regs *)ctx->args[0];
+    const char __user *filename_ptr = NULL;
+
+    /* En x86_64, el primer argumento de una syscall (filename) viaja en di */
+    bpf_probe_read_kernel(&filename_ptr, sizeof(filename_ptr), &regs->di);
+
     struct data_t data = {};
     data.pid = bpf_get_current_pid_tgid() >> 32;
     data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     bpf_get_current_comm(&data.comm, sizeof(data.comm));
 
-    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
+    if (filename_ptr != NULL) {
+        bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename_ptr);
+    }
 
-    events.perf_submit(args, &data, sizeof(data));
+    events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
 """
@@ -50,7 +64,7 @@ def imprimir_evento(cpu, data, size):
 def main():
     global b
     print("=== KERNELPULSE-eBPF ACTIVE MONITOR ===", flush=True)
-    print("[*] Compilando e inyectando sonda (tracepoint syscalls:sys_enter_execve)...", flush=True)
+    print("[*] Compilando e inyectando sonda (raw_tracepoint/sys_enter)...", flush=True)
 
     b = BPF(text=bpf_source)
 
