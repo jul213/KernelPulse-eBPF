@@ -2,14 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 KernelPulse-eBPF: Real-time kernel-level syscall monitor.
-Author: Julio
+Author: Sala Blanca Operator
 """
 
 from bcc import BPF
 import sys
-import time
 
-# Load the C source code of the eBPF program
 bpf_source = """
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
@@ -34,29 +32,33 @@ int trace_execve(struct pt_regs *ctx, const char __user *filename) {
 }
 """
 
+b = None
+
 def imprimir_evento(cpu, data, size):
-    evento = bpf["events"].event(data)
-    print(f"[ALERTA KERNEL] PID: {evento.pid} | UID: {evento.uid} | Proceso: {evento.comm.decode('utf-8', 'ignore')} | Binario: {evento.filename.decode('utf-8', 'ignore')}")
+    evento = b["events"].event(data)
+    print(
+        f"[ALERTA KERNEL] PID: {evento.pid} | UID: {evento.uid} | "
+        f"Proceso: {evento.comm.decode('utf-8', 'ignore')} | "
+        f"Binario: {evento.filename.decode('utf-8', 'ignore')}",
+        flush=True,
+    )
 
 def main():
-    print("=== KERNELPULSE-eBPF ACTIVE MONITOR ===")
-    print("[*] Compilando e inyectando sonda en el Kernel...")
-    
-    # Inicializar BPF
+    global b
+    print("=== KERNELPULSE-eBPF ACTIVE MONITOR ===", flush=True)
+    print("[*] Compilando e inyectando sonda en el Kernel...", flush=True)
+
     b = BPF(text=bpf_source)
-    
-    # Adjuntar la sonda al punto de entrada de la syscall sys_enter_execve
     b.attach_kprobe(event=b.get_syscall_fnname("execve"), fn_name="trace_execve")
-    
-    print("[+] Sonda activa. Monitoreando llamadas al sistema en tiempo real. Presiona Ctrl+C para salir.\n")
-    
+
+    print("[+] Sonda activa. Monitoreando llamadas al sistema en tiempo real. Presiona Ctrl+C para salir.\n", flush=True)
     b["events"].open_perf_buffer(imprimir_evento)
-    
+
     try:
         while True:
             b.perf_buffer_poll()
     except KeyboardInterrupt:
-        print("\n[-] Desconectando sonda del kernel y limpiando registros...")
+        print("\n[-] Desconectando sonda del kernel y limpiando registros...", flush=True)
         sys.exit(0)
 
 if __name__ == "__main__":
