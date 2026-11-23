@@ -69,7 +69,7 @@ def clasificar_evento(uid: int, binario: str) -> tuple[str, str]:
 
 
 def manejar_evento(cpu, data, size):
-    evento = b["events"].event(data)
+    evento = b["eventso"].event(data)
     binario = evento.filename.decode("utf-8", "ignore") or "<desconocido>"
     proceso = evento.comm.decode("utf-8", "ignore")
     pid = int(evento.pid)
